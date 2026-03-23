@@ -5,8 +5,8 @@ export interface WordData {
   partsPronunciation?: string[]; // New: TTS respelling for each part (e.g. "ti" -> "tie")
   root: string;
   phonetic: string;
-  translation: string;
-  chineseTranslation: string;
+  translation: string;        // Chinese translation
+  chineseTranslation: string; // English definition
   sentence: string;
   imageUrl?: string;
   relatedWords: string[];

@@ -4,10 +4,13 @@ import { WordData } from "../types";
 const getApiKey = () => process.env.GEMINI_API_KEY || process.env.API_KEY || '';
 
 // Helper for retrying async operations with timeout
-async function withRetry<T>(operation: () => Promise<T>, retries = 2, delay = 1000, timeoutMs = 30000): Promise<T> {
+async function withRetry<T>(operation: () => Promise<T>, retries = 2, delay = 1000, timeoutMs = 60000): Promise<T> {
   try {
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('Operation timed out')), timeoutMs);
+      setTimeout(() => {
+        console.error(`Operation timed out after ${timeoutMs}ms`);
+        reject(new Error('Operation timed out (Gemini API took too long to respond)'));
+      }, timeoutMs);
     });
     return await Promise.race([operation(), timeoutPromise]);
   } catch (error: any) {
@@ -158,8 +161,8 @@ export const generateWordData = async (word: string): Promise<WordData> => {
       3. "partOfSpeech": The part of speech abbreviation (e.g., "n.", "v.", "adj.", "adv.").
       4. "root": A very simple memory aid or mnemonic for kids (e.g. for 'bird' -> 'Imagine a small bird flying in the sky'). Avoid complex Latin etymology unless it's very easy to understand.
       5. "phonetic": **Standard US English IPA** (International Phonetic Alphabet). Ensure it is accurate.
-      6. "translation": Simple English definition.
-      7. "chineseTranslation": The Chinese translation of the word.
+      6. "translation": The Chinese translation of the word.
+      7. "chineseTranslation": Simple English definition.
       8. "sentence": Simple example sentence.
       9. "phrases": List 3 short, simple, and common phrases/collocations using this word (max 3-4 words each) to help understand usage (e.g. "red apple", "big apple").
       10. "relatedWords": List of 3 English words that share similar spelling patterns, roots, or are compound words containing this word (e.g. for 'seven' -> 'seventeen', 'seventy', 'seventh'). If none exist, use rhyming words.`,
@@ -174,8 +177,8 @@ export const generateWordData = async (word: string): Promise<WordData> => {
             partsPronunciation: { type: Type.ARRAY, items: { type: Type.STRING } },
             root: { type: Type.STRING },
             phonetic: { type: Type.STRING },
-            translation: { type: Type.STRING },
-            chineseTranslation: { type: Type.STRING },
+            translation: { type: Type.STRING, description: "Chinese translation" },
+            chineseTranslation: { type: Type.STRING, description: "English definition" },
             sentence: { type: Type.STRING },
             phrases: { type: Type.ARRAY, items: { type: Type.STRING } },
             relatedWords: { type: Type.ARRAY, items: { type: Type.STRING } }
@@ -227,8 +230,14 @@ export const generateWordImage = async (word: string): Promise<string> => {
     // Compress the image before returning
     return new Promise((resolve, reject) => {
       const img = new Image();
+      const compressionTimeout = setTimeout(() => {
+        console.warn("Image compression timed out, returning raw image");
+        resolve(rawImage);
+      }, 10000); // 10s timeout for compression
+
       img.src = rawImage;
       img.onload = () => {
+        clearTimeout(compressionTimeout);
         const canvas = document.createElement('canvas');
         const maxWidth = 1024;
         let width = img.width;
@@ -250,6 +259,7 @@ export const generateWordImage = async (word: string): Promise<string> => {
         resolve(canvas.toDataURL('image/jpeg', 0.7)); // Compress to JPEG with 70% quality
       };
       img.onerror = (err) => {
+        clearTimeout(compressionTimeout);
         console.warn("Image compression failed, returning raw image", err);
         resolve(rawImage);
       };

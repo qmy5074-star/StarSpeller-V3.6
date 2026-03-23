@@ -71,8 +71,9 @@ export const initializeUsers = async (): Promise<User> => {
     countReq.onsuccess = () => {
       if (countReq.result === 0) {
         // Create default Eva user
-        store.put(DEFAULT_USER);
-        resolve(DEFAULT_USER);
+        const putReq = store.put(DEFAULT_USER);
+        putReq.onsuccess = () => resolve(DEFAULT_USER);
+        putReq.onerror = () => reject(putReq.error);
       } else {
         // Get the default user or the first one found
         const cursorReq = store.openCursor();
@@ -592,7 +593,8 @@ export const exportDatabaseToJson = async (userId: string, currentUsername: stri
         
         const data: any = {
             exportDate: new Date().toISOString(),
-            exportType: exportType
+            exportType: exportType,
+            username: currentUsername
         };
 
         let completed = 0;
