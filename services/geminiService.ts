@@ -1,19 +1,23 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import { WordData } from "../types";
 
 const getApiKey = () => process.env.GEMINI_API_KEY || process.env.API_KEY || '';
 
 // Helper for retrying async operations with timeout
-async function withRetry<T>(operation: () => Promise<T>, retries = 2, delay = 1000, timeoutMs = 60000): Promise<T> {
+async function withRetry<T>(operation: () => Promise<T>, retries = 2, delay = 1000, timeoutMs = 120000): Promise<T> {
+  let timeoutId: any;
   try {
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
         console.error(`Operation timed out after ${timeoutMs}ms`);
         reject(new Error('Operation timed out (Gemini API took too long to respond)'));
       }, timeoutMs);
     });
-    return await Promise.race([operation(), timeoutPromise]);
+    const result = await Promise.race([operation(), timeoutPromise]);
+    if (timeoutId) clearTimeout(timeoutId);
+    return result;
   } catch (error: any) {
+    if (timeoutId) clearTimeout(timeoutId);
     const errString = error?.message || JSON.stringify(error);
     
     // Check for Quota limits immediately and trigger UI redirect
@@ -82,6 +86,8 @@ export const validateWordInput = async (word: string): Promise<WordValidationRes
       - reason: string (only if isValid is false, in English)
       - correctedWord: string (the canonical form of the word, or corrected spelling, in lowercase)`,
       config: {
+        maxOutputTokens: 1024,
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -114,59 +120,23 @@ export const generateWordData = async (word: string): Promise<WordData> => {
       contents: `Generate detailed vocabulary data for the English word: "${word}". 
       Target audience: Elementary school students learning English. 
       
-      1. "parts": Break the word into **Spelling Chunks** using a **Right-to-Left** analysis strategy.
-         - **Rule 1 (Right-to-Left, Vowel+Consonant)**: Scan from right to left. Group one vowel sound with its leading consonant(s).
-         - **Rule 2 (Silent E)**: 'e' at the end of a word is silent and does NOT count as a vowel. It belongs to the preceding group.
-         - **Rule 3 (Vowel Teams)**: Vowel digraphs (e.g., 'ai', 'ea', 'oa', 'ou', 'ir', 'er', 'ur') count as ONE vowel sound.
-         - **Rule 4 (Ends)**: Keep suffixes intact where possible (e.g., 'ment', 'tion', 'ing').
-         - **Rule 5 (Single Vowel Sound)**: If a word has only one vowel sound (like 'cake', 'bird', 'shirt', 'make', 'bike'), do NOT split it. It is a single chunk.
-         - **Specific Override**: For "bird", use ["bird"].
-         - **Specific Override**: For "shirt", use ["shirt"].
-         - **Specific Override**: For "favourite", use ["fa", "vou", "rite"].
-         - **Specific Override**: For "favorite", use ["fa", "vo", "rite"].
-         - **Specific Override**: For "cake", use ["cake"].
-         - **Specific Override**: For "education", use ["e", "du", "ca", "tion"].
-         - **Specific Override**: For "helicopter", use ["he", "li", "cop", "ter"].
-         - **Specific Override**: For "argument", use ["ar", "gu", "ment"].
-         - **Specific Override**: For "bucket", use ["bu", "cket"].
-         - **Specific Override**: For "slime", use ["s", "lime"].
-         - **Specific Override**: For "bait", use ["bait"].
-         - **Specific Override**: For "kitchen", use ["kit", "chen"].
-         - **Specific Override**: For "complementary", use ["com", "ple", "men", "ta", "ry"].
-         - **Specific Override**: For "kangaroo", use ["kan", "ga", "roo"].
-         - **Specific Override**: For "penguin", use ["pen", "guin"].
-         - **Goal**: Every part should be a pronounceable chunk, ideally following "One Vowel One Consonant" flow where the consonant leads the next vowel.
-      2. "partsPronunciation": An array of simple English strings mirroring "parts" to help a TTS engine pronounce the syllable correctly in isolation.
-         - **Crucial**: The goal is standard American pronunciation.
-         - **Specific Override**: "bird" -> "bird".
-         - **Specific Override**: "shirt" -> "shirt".
-         - **Specific Override**: "ti" in tiger -> "tie". "ger" in tiger -> "gur".
-         - **Specific Override**: "gu" in argument -> "gyou".
-         - **Specific Override**: "bu" in bucket -> "buck". "cket" in bucket -> "it".
-         - **Specific Override**: "s" in slime -> "ss". "lime" in slime -> "lime".
-         - **Specific Override**: "bait" in bait -> "bate".
-         - **Specific Override**: "cake" in cake -> "cake".
-         - **Specific Override**: "kit" in kitchen -> "kit". "chen" in kitchen -> "chin".
-         - **Specific Override**: "com" in complementary -> "kom". "ple" in complementary -> "pluh". "men" in complementary -> "men". "ta" in complementary -> "tuh". "ry" in complementary -> "ree".
-         - **Specific Override**: "kan" in kangaroo -> "kang". "ga" in kangaroo -> "guh". "roo" in kangaroo -> "roo".
-         - **Specific Override**: "pen" in penguin -> "pen". "guin" in penguin -> "gwin".
-         - **Specific Override**: "vou" in favourite -> "vuh". "rite" in favourite -> "rit".
-         - **Specific Override**: "vo" in favorite -> "vuh". "rite" in favorite -> "rit".
-         - **Specific Override**: "ca" in education -> "kay". "du" in education -> "jew".
-         - Example: "tiger" -> ["tie", "gur"]
-         - Example: "education" -> ["eh", "jew", "kay", "shun"]
-         - Example: "helicopter" -> ["heh", "lih", "cop", "tur"]
-         - Example: "argument" -> ["are", "gyou", "ment"]
-         - Example: "apple" -> ["ap", "pull"]
-      3. "partOfSpeech": The part of speech abbreviation (e.g., "n.", "v.", "adj.", "adv.").
-      4. "root": A very simple memory aid or mnemonic for kids (e.g. for 'bird' -> 'Imagine a small bird flying in the sky'). Avoid complex Latin etymology unless it's very easy to understand.
-      5. "phonetic": **Standard US English IPA** (International Phonetic Alphabet). Ensure it is accurate.
-      6. "translation": The Chinese translation of the word.
+      1. "parts": Break the word into spelling chunks (syllables).
+         - Follow a standard syllable splitting approach.
+         - For single-syllable words (e.g., "bird", "cake", "shirt"), do NOT split.
+         - Example: "tiger" -> ["ti", "ger"], "education" -> ["e", "du", "ca", "tion"].
+      2. "partsPronunciation": Mirror "parts" with simple English phonetic spellings for a TTS engine.
+         - Example: "tiger" -> ["tie", "gur"], "education" -> ["eh", "jew", "kay", "shun"].
+      3. "partOfSpeech": Abbreviated (e.g., "n.", "v.", "adj.").
+      4. "root": A simple memory aid or mnemonic for kids.
+      5. "phonetic": Standard US English IPA.
+      6. "translation": Chinese translation.
       7. "chineseTranslation": Simple English definition.
-      8. "sentence": Simple example sentence.
-      9. "phrases": List 3 short, simple, and common phrases/collocations using this word (max 3-4 words each) to help understand usage (e.g. "red apple", "big apple").
-      10. "relatedWords": List of 3 English words that share similar spelling patterns, roots, or are compound words containing this word (e.g. for 'seven' -> 'seventeen', 'seventy', 'seventh'). If none exist, use rhyming words.`,
+      8. "sentence": A simple example sentence.
+      9. "phrases": 3 short, common phrases (max 3-4 words each).
+      10. "relatedWords": 3 words with similar patterns or roots.`,
       config: {
+        maxOutputTokens: 2048,
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -225,7 +195,7 @@ export const generateWordImage = async (word: string): Promise<string> => {
          }
       }
       throw new Error("No image data found in response");
-    }, 2); // Retry 2 times
+    }, 2, 1000, 180000); // Retry 2 times, 180s timeout for image gen
     
     // Compress the image before returning
     return new Promise((resolve, reject) => {

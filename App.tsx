@@ -899,14 +899,16 @@ export default function App() {
                 }
             }
         } else {
-            // Generate fresh from AI
-            data = await generateWordData(wordToProcess);
-            try {
-                img = await generateWordImage(wordToProcess);
-            } catch (e) {
-                console.warn("Image gen failed", e);
-                img = `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400' viewBox='0 0 400 400'><rect width='400' height='400' fill='%23e0f2fe'/><text x='50%' y='50%' font-family='sans-serif' font-size='80' fill='%237dd3fc' text-anchor='middle' dominant-baseline='middle'>🖼️</text><text x='50%' y='65%' font-family='sans-serif' font-size='20' fill='%237dd3fc' text-anchor='middle' dominant-baseline='middle'>No Image</text></svg>`;
-            }
+            // Generate fresh from AI in parallel
+            const [dataResult, imgResult] = await Promise.all([
+                generateWordData(wordToProcess),
+                generateWordImage(wordToProcess).catch(e => {
+                    console.warn("Image gen failed", e);
+                    return `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400' viewBox='0 0 400 400'><rect width='400' height='400' fill='%23e0f2fe'/><text x='50%' y='50%' font-family='sans-serif' font-size='80' fill='%237dd3fc' text-anchor='middle' dominant-baseline='middle'>🖼️</text><text x='50%' y='65%' font-family='sans-serif' font-size='20' fill='%237dd3fc' text-anchor='middle' dominant-baseline='middle'>No Image</text></svg>`;
+                })
+            ]);
+            data = dataResult;
+            img = imgResult;
             data.imageUrl = img;
         }
         
